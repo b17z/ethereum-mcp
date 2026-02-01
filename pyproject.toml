@@ -1,0 +1,48 @@
+[project]
+name = "ethereum-mcp"
+version = "0.1.0"
+description = "MCP server for Ethereum consensus specs with RAG-powered search"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=0.4.0",
+    "lancedb>=0.6.0",
+    "sentence-transformers>=2.2.0",
+    "langchain>=0.1.0",
+    "langchain-text-splitters>=0.0.1",
+    "gitpython>=3.1.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies.clients]
+# For parsing client source code in multiple languages
+tree-sitter = ">=0.20.0"
+tree-sitter-rust = ">=0.20.0"  # For reth, lighthouse
+tree-sitter-go = ">=0.20.0"   # For geth, prysm, erigon
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+ethereum-mcp = "ethereum_mcp.cli:main"
+eth-mcp = "ethereum_mcp.server:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
