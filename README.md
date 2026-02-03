@@ -8,10 +8,10 @@ RAG-powered MCP server for Ethereum consensus specs, EIPs, and client source cod
 ## What It Does
 
 Indexes and searches across:
-- **Consensus Specs** - Official beacon chain specifications
-- **EIPs** - Ethereum Improvement Proposals
-- **Builder Specs** - MEV-boost and PBS specifications
-- **Client Source Code** - All major EL and CL implementations
+- [Consensus Specs](https://github.com/ethereum/consensus-specs) - Official beacon chain specifications
+- [EIPs](https://github.com/ethereum/EIPs) - Ethereum Improvement Proposals
+- [Builder Specs](https://github.com/ethereum/builder-specs) - MEV-boost and PBS specifications
+- Client Source Code - All major EL and CL implementations
 
 ## Installation
 
@@ -169,21 +169,28 @@ When running as an MCP server:
 
 | Client | Language | Organization |
 |--------|----------|--------------|
-| Geth | Go | Ethereum Foundation |
-| Reth | Rust | Paradigm |
-| Nethermind | C# | Nethermind |
-| Besu | Java | Hyperledger/ConsenSys |
-| Erigon | Go | Erigon |
+| [Geth](https://github.com/ethereum/go-ethereum) | Go | Ethereum Foundation |
+| [Reth](https://github.com/paradigmxyz/reth) | Rust | Paradigm |
+| [Nethermind](https://github.com/NethermindEth/nethermind) | C# | Nethermind |
+| [Erigon](https://github.com/ledgerwatch/erigon) | Go | Erigon |
 
 ### Consensus Layer Clients
 
 | Client | Language | Organization |
 |--------|----------|--------------|
-| Prysm | Go | Offchain Labs |
-| Lighthouse | Rust | Sigma Prime |
-| Teku | Java | ConsenSys |
-| Nimbus | Nim | Status |
-| Lodestar | TypeScript | ChainSafe |
+| [Prysm](https://github.com/prysmaticlabs/prysm) | Go | Offchain Labs |
+| [Lighthouse](https://github.com/sigp/lighthouse) | Rust | Sigma Prime |
+| [Teku](https://github.com/ConsenSys/teku) | Java | ConsenSys |
+| [Nimbus](https://github.com/status-im/nimbus-eth2) | Nim | Status |
+
+### MEV Infrastructure
+
+| Project | Description |
+|---------|-------------|
+| [mev-boost](https://github.com/flashbots/mev-boost) | MEV-boost middleware |
+| [Flashbots Builder](https://github.com/flashbots/builder) | Block builder reference |
+| [mev-boost-relay](https://github.com/flashbots/mev-boost-relay) | Relay implementation |
+| [rbuilder](https://github.com/flashbots/rbuilder) | Rust block builder |
 
 ```bash
 # Download specific clients
