@@ -26,9 +26,9 @@ MEV Infrastructure (Flashbots):
 
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from git import Repo
 

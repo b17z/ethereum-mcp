@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gateway": {
+      "command": "mcpmon",
+      "args": ["--config", "/Users/be.nvy/.mcpmon.yaml"]
+    }
+  }
+}
