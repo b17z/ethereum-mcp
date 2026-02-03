@@ -1,5 +1,6 @@
 """Chunk markdown documents and client code for embedding."""
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,36 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 
 if TYPE_CHECKING:
     from .client_compiler import ExtractedConstant, ExtractedItem
+
+
+def generate_chunk_id(
+    project: str,
+    source_type: str,
+    source_file: str,
+    chunk_index: int,
+    content: str,
+) -> str:
+    """
+    Generate a unique, deterministic chunk ID.
+
+    Format: {project}_{source_type}_{path_hash}_{index:04d}_{content_hash}
+
+    The content hash ensures that if content changes, the ID changes,
+    enabling proper delta updates.
+
+    Args:
+        project: Project identifier (e.g., "eth")
+        source_type: Type of source (e.g., "spec", "eip", "function")
+        source_file: Relative path to source file
+        chunk_index: Index of this chunk within the file
+        content: Chunk content for hashing
+
+    Returns:
+        Unique chunk ID string
+    """
+    path_hash = hashlib.sha256(source_file.encode()).hexdigest()[:8]
+    content_hash = hashlib.sha256(content.encode()).hexdigest()[:8]
+    return f"{project}_{source_type}_{path_hash}_{chunk_index:04d}_{content_hash}"
 
 
 @dataclass(frozen=True)
@@ -21,6 +52,7 @@ class Chunk:
     section: str | None  # Section header
     chunk_type: str  # 'spec', 'eip', 'function', 'constant'
     metadata: dict
+    chunk_id: str = ""  # Unique ID for incremental indexing
 
 
 def chunk_documents(
@@ -29,6 +61,8 @@ def chunk_documents(
     builder_spec_files: list[Path] | None = None,
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
+    generate_ids: bool = False,
+    base_path: Path | None = None,
 ) -> list[Chunk]:
     """
     Chunk spec and EIP documents for embedding.
@@ -39,9 +73,11 @@ def chunk_documents(
         builder_spec_files: List of builder-specs markdown files
         chunk_size: Target chunk size in characters
         chunk_overlap: Overlap between chunks
+        generate_ids: If True, generate unique chunk IDs for incremental indexing
+        base_path: Base path for relative paths in chunk IDs (required if generate_ids=True)
 
     Returns:
-        List of chunks with metadata
+        List of chunks with metadata (and chunk_id if generate_ids=True)
     """
     chunks = []
     builder_spec_files = builder_spec_files or []
@@ -72,7 +108,108 @@ def chunk_documents(
     for builder_file in builder_spec_files:
         chunks.extend(_chunk_builder_spec_file(builder_file, md_splitter, text_splitter))
 
+    # Generate chunk IDs if requested
+    if generate_ids:
+        chunks = _assign_chunk_ids(chunks, base_path)
+
     return chunks
+
+
+def _assign_chunk_ids(chunks: list[Chunk], base_path: Path | None = None) -> list[Chunk]:
+    """
+    Assign unique chunk IDs to chunks, grouped by source file.
+
+    Args:
+        chunks: List of chunks without IDs
+        base_path: Base path for making source paths relative
+
+    Returns:
+        New list of chunks with chunk_id populated
+    """
+    # Group chunks by source file to assign sequential indices
+    from collections import defaultdict
+
+    file_chunks: dict[str, list[tuple[int, Chunk]]] = defaultdict(list)
+    for idx, chunk in enumerate(chunks):
+        file_chunks[chunk.source].append((idx, chunk))
+
+    import contextlib
+
+    # Assign IDs
+    new_chunks = [None] * len(chunks)
+    for source, indexed_chunks in file_chunks.items():
+        # Make path relative if base_path provided
+        rel_source = source
+        if base_path:
+            with contextlib.suppress(ValueError):
+                rel_source = str(Path(source).relative_to(base_path))
+
+        for chunk_idx, (original_idx, chunk) in enumerate(indexed_chunks):
+            chunk_id = generate_chunk_id(
+                project="eth",
+                source_type=chunk.chunk_type,
+                source_file=rel_source,
+                chunk_index=chunk_idx,
+                content=chunk.content,
+            )
+            # Create new chunk with ID (Chunk is frozen)
+            new_chunk = Chunk(
+                content=chunk.content,
+                source=chunk.source,
+                fork=chunk.fork,
+                section=chunk.section,
+                chunk_type=chunk.chunk_type,
+                metadata=chunk.metadata,
+                chunk_id=chunk_id,
+            )
+            new_chunks[original_idx] = new_chunk
+
+    return new_chunks
+
+
+def chunk_single_file(
+    file_path: Path,
+    file_type: str,
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+    base_path: Path | None = None,
+) -> list[Chunk]:
+    """
+    Chunk a single file for incremental indexing.
+
+    Args:
+        file_path: Path to the file to chunk
+        file_type: Type of file ('spec', 'eip', 'builder')
+        chunk_size: Target chunk size in characters
+        chunk_overlap: Overlap between chunks
+        base_path: Base path for relative paths in chunk IDs
+
+    Returns:
+        List of chunks with chunk_id populated
+    """
+    headers_to_split_on = [
+        ("#", "h1"),
+        ("##", "h2"),
+        ("###", "h3"),
+    ]
+
+    md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+
+    chunks = []
+    if file_type == "spec":
+        fork = _extract_fork_from_path(file_path)
+        chunks = _chunk_spec_file(file_path, fork, md_splitter, text_splitter)
+    elif file_type == "eip":
+        chunks = _chunk_eip_file(file_path, md_splitter, text_splitter)
+    elif file_type == "builder":
+        chunks = _chunk_builder_spec_file(file_path, md_splitter, text_splitter)
+
+    # Assign chunk IDs
+    return _assign_chunk_ids(chunks, base_path)
 
 
 def _extract_fork_from_path(path: Path) -> str | None:

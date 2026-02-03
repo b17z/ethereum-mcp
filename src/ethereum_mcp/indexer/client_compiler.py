@@ -13,9 +13,9 @@ making cross-client search valuable for understanding consensus.
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
 
 from ..logging import get_logger
 
@@ -231,10 +231,7 @@ class RustClientParser:
 
         while idx >= 0:
             line = lines[idx].strip()
-            if line.startswith("///"):
-                doc_lines.insert(0, line[3:].strip())
-                idx -= 1
-            elif line.startswith("//!"):
+            if line.startswith("///") or line.startswith("//!"):
                 doc_lines.insert(0, line[3:].strip())
                 idx -= 1
             elif line == "" or line.startswith("#["):
@@ -639,17 +636,15 @@ def compile_client(
     for file_path in source_files:
         items, constants = parser.parse_file(file_path)
 
+        import contextlib
+
         # Make paths relative
         for item in items:
-            try:
+            with contextlib.suppress(ValueError):
                 item.file_path = str(Path(item.file_path).relative_to(source_dir))
-            except ValueError:
-                pass
         for const in constants:
-            try:
+            with contextlib.suppress(ValueError):
                 const.file_path = str(Path(const.file_path).relative_to(source_dir))
-            except ValueError:
-                pass
 
         all_items.extend(items)
         all_constants.extend(constants)

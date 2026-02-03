@@ -13,9 +13,16 @@ ethereum-mcp download    # Clone consensus-specs and EIPs
 ethereum-mcp compile     # Extract constants/functions to JSON
 ethereum-mcp index       # Build vector embeddings in LanceDB
 
+# Incremental updates (fast)
+ethereum-mcp update      # Git pull + incremental re-index
+ethereum-mcp index       # Incremental by default
+ethereum-mcp index --full    # Force full rebuild
+ethereum-mcp index --dry-run # Preview what would change
+
 # Search
 ethereum-mcp search "slashing penalty"
 ethereum-mcp status      # Check index status
+ethereum-mcp models      # List available embedding models
 ```
 
 ## MCP Tools
@@ -38,11 +45,13 @@ ethereum-mcp status      # Check index status
 src/ethereum_mcp/
 ├── server.py           # MCP server (FastMCP)
 ├── cli.py              # CLI commands
+├── config.py           # Configuration management
 ├── indexer/
 │   ├── downloader.py   # Git clone specs/EIPs
 │   ├── compiler.py     # Extract to JSON
-│   ├── chunker.py      # Markdown chunking
-│   └── embedder.py     # Embeddings + LanceDB
+│   ├── chunker.py      # Markdown chunking + chunk IDs
+│   ├── embedder.py     # Embeddings + LanceDB + IncrementalEmbedder
+│   └── manifest.py     # File tracking for incremental updates
 └── expert/
     └── guidance.py     # Curated interpretations
 ```
@@ -51,11 +60,30 @@ src/ethereum_mcp/
 
 ```
 ~/.ethereum-mcp/
+├── config.yaml         # Configuration (optional)
+├── manifest.json       # Index state tracking
 ├── consensus-specs/    # Cloned repo
 ├── EIPs/               # Cloned repo
+├── builder-specs/      # Cloned repo
 ├── compiled/           # JSON extracts per fork
 └── lancedb/            # Vector index
 ```
+
+## Configuration
+
+Create `~/.ethereum-mcp/config.yaml` to customize:
+
+```yaml
+embedding:
+  model: "all-MiniLM-L6-v2"  # Or codesage/codesage-large
+  batch_size: 32
+
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+```
+
+Available models: `all-MiniLM-L6-v2`, `all-mpnet-base-v2`, `codesage/codesage-large`, `voyage:voyage-code-3`
 
 ## Development
 
@@ -64,6 +92,16 @@ pip install -e ".[dev]"
 pytest
 ruff check src/
 ```
+
+## Incremental Indexing
+
+See [docs/INCREMENTAL_INDEXING.md](docs/INCREMENTAL_INDEXING.md) for detailed documentation.
+
+Key concepts:
+- **Manifest**: Tracks file hashes and chunk IDs
+- **Chunk IDs**: Deterministic IDs based on content hash
+- **Change detection**: Fast mtime check, then hash verification
+- **Delta updates**: Only re-embed changed content
 
 ## Adding Expert Guidance
 

@@ -2,52 +2,145 @@
 
 RAG-powered MCP server for Ethereum consensus specs, EIPs, and client source code.
 
+[![PyPI version](https://badge.fury.io/py/ethereum-mcp.svg)](https://badge.fury.io/py/ethereum-mcp)
+[![CI](https://github.com/be-nvy/ethereum-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/be-nvy/ethereum-mcp/actions/workflows/ci.yml)
+
 ## What It Does
 
 Indexes and searches across:
 - **Consensus Specs** - Official beacon chain specifications
 - **EIPs** - Ethereum Improvement Proposals
+- **Builder Specs** - MEV-boost and PBS specifications
 - **Client Source Code** - All major EL and CL implementations
-- **MEV Infrastructure** - Flashbots mev-boost, relays, builders, PBS specs
+
+## Installation
+
+```bash
+# From PyPI
+pip install ethereum-mcp
+
+# From source
+pip install -e .
+
+# With client code parsing support
+pip install -e ".[clients]"
+
+# With Voyage API embeddings (best quality)
+pip install -e ".[voyage]"
+```
 
 ## Quick Start
 
 ```bash
-# Install
-pip install -e .
-
-# Build specs index (fast)
+# Build the index (downloads specs + creates embeddings)
 ethereum-mcp build
 
-# Build with client source code (slower, more complete)
-ethereum-mcp build --include-clients
+# Search the specs
+ethereum-mcp search "slashing penalty"
+
+# Check status
+ethereum-mcp status
 ```
+
+## Features
+
+### Incremental Indexing
+
+The v0.2.0 release introduces **incremental indexing** - only re-embeds changed files instead of rebuilding the entire index. This reduces update time from minutes to seconds.
+
+```bash
+# Update repos and incrementally re-index (fast!)
+ethereum-mcp update
+
+# Incremental index (default behavior)
+ethereum-mcp index
+
+# Preview what would change without indexing
+ethereum-mcp index --dry-run
+
+# Force full rebuild
+ethereum-mcp index --full
+```
+
+**How it works:**
+1. Tracks file hashes and modification times in a manifest
+2. Detects which files changed since last index
+3. Only re-embeds the changed content
+4. Updates LanceDB incrementally (add/delete operations)
+
+### Configurable Embedding Models
+
+Choose from multiple embedding models based on your quality/speed tradeoff:
+
+```bash
+# List available models
+ethereum-mcp models
+
+# Use a specific model
+ethereum-mcp index --model codesage/codesage-large
+```
+
+| Model | Dims | Quality | Speed | Notes |
+|-------|------|---------|-------|-------|
+| `all-MiniLM-L6-v2` | 384 | Fair | Fast | Default, good for quick searches |
+| `all-mpnet-base-v2` | 768 | Good | Medium | Better quality |
+| `codesage/codesage-large` | 1024 | Good | Medium | Code-specialized |
+| `voyage:voyage-code-3` | 1024 | Excellent | API | Best quality, requires API key |
+
+Configure in `~/.ethereum-mcp/config.yaml`:
+
+```yaml
+embedding:
+  model: "codesage/codesage-large"
+  batch_size: 32
+
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+```
+
+### Expert Guidance
+
+Curated knowledge beyond what's in the specs:
+
+```bash
+# Via CLI (when running as MCP server)
+eth_expert_guidance("slashing")
+eth_expert_guidance("mev")
+eth_expert_guidance("maxeb")
+```
+
+Topics include: `churn`, `slashing`, `maxeb`, `withdrawals`, `mev`, `pbs`, `epbs`, `mev_boost`, `flashbots`
 
 ## CLI Commands
 
 ```bash
-# Build pipeline
+# Full build pipeline
 ethereum-mcp build                    # Specs + EIPs only
 ethereum-mcp build --include-clients  # Include client source code
+ethereum-mcp build --full             # Force full rebuild
 
 # Individual steps
-ethereum-mcp download                 # Clone consensus-specs and EIPs
+ethereum-mcp download                 # Clone consensus-specs, EIPs, builder-specs
 ethereum-mcp download --include-clients
-ethereum-mcp download-clients         # Just download clients
-ethereum-mcp download-clients --client reth --client lighthouse
-
 ethereum-mcp compile                  # Extract specs to JSON
-ethereum-mcp compile --include-clients
-
 ethereum-mcp index                    # Build vector embeddings
+ethereum-mcp index --dry-run          # Preview changes
+ethereum-mcp index --full             # Force full rebuild
+ethereum-mcp index --model MODEL      # Use specific embedding model
+
+# Update (git pull + incremental index)
+ethereum-mcp update
+ethereum-mcp update --full            # Update + force rebuild
 
 # Search
 ethereum-mcp search "slashing penalty"
 ethereum-mcp search "attestation" --fork electra
 ethereum-mcp search "EIP-4844" --limit 10
 
-# Status
-ethereum-mcp status                   # Show what's downloaded/compiled
+# Info
+ethereum-mcp status                   # Index status, manifest info
+ethereum-mcp models                   # List embedding models
 ```
 
 ## MCP Tools
@@ -92,30 +185,12 @@ When running as an MCP server:
 | Nimbus | Nim | Status |
 | Lodestar | TypeScript | ChainSafe |
 
-For current client diversity statistics, see [clientdiversity.org](https://clientdiversity.org).
-
-### MEV Infrastructure (Flashbots)
-
-| Repo | Language | Purpose |
-|------|----------|---------|
-| mev-boost | Go | Middleware connecting validators to builders |
-| flashbots-builder | Go | Block builder (geth fork) |
-| mev-boost-relay | Go | Relay implementation |
-| builder-specs | Markdown | Builder API specifications |
-| mev-share-node | Go | MEV-Share orderflow auctions |
-| rbuilder | Rust | High-performance Rust block builder |
-
-### Downloading Specific Clients
-
 ```bash
-# Download just the Rust clients
+# Download specific clients
 ethereum-mcp download-clients --client reth --client lighthouse
 
-# Download all execution layer clients
-ethereum-mcp download-clients --client geth --client reth --client nethermind --client erigon
-
 # Download MEV infrastructure
-ethereum-mcp download-clients --client mev-boost --client flashbots-builder --client rbuilder
+ethereum-mcp download-clients --client mev-boost --client flashbots-builder
 ```
 
 ## Project Structure
@@ -124,13 +199,15 @@ ethereum-mcp download-clients --client mev-boost --client flashbots-builder --cl
 src/ethereum_mcp/
 ├── server.py               # MCP server (FastMCP)
 ├── cli.py                  # CLI commands
+├── config.py               # Configuration management
 ├── clients.py              # Client tracking and diversity
 ├── indexer/
 │   ├── downloader.py       # Git clone specs + clients
 │   ├── compiler.py         # Spec extraction
 │   ├── client_compiler.py  # Multi-language client parsing
-│   ├── chunker.py          # Document chunking
-│   └── embedder.py         # Embeddings + LanceDB
+│   ├── chunker.py          # Document chunking + chunk IDs
+│   ├── embedder.py         # Embeddings + LanceDB + incremental
+│   └── manifest.py         # File tracking for incremental updates
 └── expert/
     └── guidance.py         # Curated interpretations
 ```
@@ -139,23 +216,13 @@ src/ethereum_mcp/
 
 ```
 ~/.ethereum-mcp/
+├── config.yaml             # Configuration (optional)
+├── manifest.json           # Index state tracking
 ├── consensus-specs/        # Cloned specs repo
 ├── EIPs/                   # Cloned EIPs repo
-├── clients/                # Client + MEV source code
-│   ├── reth/               # EL - Paradigm
-│   ├── go-ethereum/        # EL - Geth
-│   ├── lighthouse/         # CL - Sigma Prime
-│   ├── prysm/              # CL - Offchain Labs
-│   ├── mev-boost/          # MEV - Flashbots
-│   ├── flashbots-builder/  # MEV - Block builder
-│   ├── rbuilder/           # MEV - Rust builder
-│   └── ...
+├── builder-specs/          # Cloned builder-specs repo
+├── clients/                # Client source code (optional)
 ├── compiled/               # Extracted JSON
-│   ├── electra_spec.json
-│   └── clients/
-│       ├── reth/
-│       ├── lighthouse/
-│       └── mev-boost/
 └── lancedb/                # Vector index
 ```
 
@@ -171,53 +238,17 @@ src/ethereum_mcp/
 | Electra | 364032 | 2025-05-07 | MaxEB, consolidations |
 | Fulu | 411392 | 2025-11-15 | PeerDAS, verkle prep |
 
-## Expert Guidance Topics
-
-The `eth_expert_guidance` tool provides curated knowledge on:
-
-**Validator Mechanics:**
-- `churn` - Validator activation/exit queue mechanics
-- `slashing` - Slashing penalties across forks
-- `maxeb` - Maximum Effective Balance (Electra)
-- `withdrawals` - Withdrawal mechanics
-
-**MEV / PBS:**
-- `mev` - MEV overview and sources
-- `pbs` - Proposer-Builder Separation
-- `epbs` - Enshrined PBS (future)
-- `mev_boost` - MEV-boost architecture
-- `flashbots` - Flashbots ecosystem
-
-## Client Diversity
-
-Client diversity is critical for network security. The `eth_get_client_diversity` tool provides:
-
-- Current stake/node distribution
-- Health assessment (>66% single client = risk)
-- Recommendations for improving diversity
-
-```python
-# Example output
-{
-    "diversity_health": {
-        "consensus_layer": "GOOD - No client >34%",
-        "execution_layer": "MODERATE - Geth still >50%"
-    },
-    "supermajority_risk": "If any client >66%, a bug could cause incorrect finalization"
-}
-```
-
 ## Development
 
 ```bash
 # Install with dev dependencies
 pip install -e ".[dev]"
 
-# Install client parsing support
-pip install -e ".[clients]"
-
 # Run tests
 pytest
+
+# Run tests with coverage
+pytest --cov=ethereum_mcp
 
 # Lint
 ruff check src/
@@ -244,6 +275,11 @@ Add to your Claude Code MCP configuration:
   }
 }
 ```
+
+## Documentation
+
+- [Incremental Indexing](docs/INCREMENTAL_INDEXING.md) - How the incremental update system works
+- [CLAUDE.md](CLAUDE.md) - Quick reference for Claude Code
 
 ## License
 
