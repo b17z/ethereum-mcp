@@ -1,5 +1,5 @@
 [project]
-name = "ethereum-mcp"
+name = "eth-mcp"
 version = "0.2.0"
 description = "RAG-powered MCP server for Ethereum consensus specs and EIPs"
 readme = "README.md"
