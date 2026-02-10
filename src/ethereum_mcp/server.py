@@ -71,6 +71,35 @@ GITHUB_REPOS = {
         "url": "https://github.com/ethereum/builder-specs",
         "branch": "main",
     },
+    "leanSpec": {
+        "url": "https://github.com/leanEthereum/leanSpec",
+        "branch": "main",
+    },
+    # leanEthereum post-quantum Rust repos
+    "leanSig": {
+        "url": "https://github.com/leanEthereum/leanSig",
+        "branch": "main",
+    },
+    "leanMultisig": {
+        "url": "https://github.com/leanEthereum/leanMultisig",
+        "branch": "main",
+    },
+    "multilinear-toolkit": {
+        "url": "https://github.com/leanEthereum/multilinear-toolkit",
+        "branch": "main",
+    },
+    "fiat-shamir": {
+        "url": "https://github.com/leanEthereum/fiat-shamir",
+        "branch": "main",
+    },
+    "pm": {
+        "url": "https://github.com/leanEthereum/pm",
+        "branch": "main",
+    },
+    "leanSnappy": {
+        "url": "https://github.com/leanEthereum/leanSnappy",
+        "branch": "main",
+    },
 }
 
 
@@ -224,7 +253,12 @@ def eth_list_forks() -> list[dict]:
 
 
 @mcp.tool()
-def eth_search(query: str, fork: str | None = None, limit: int = 5) -> list[dict]:
+def eth_search(
+    query: str,
+    fork: str | None = None,
+    limit: int = 5,
+    include_lean_spec: bool = False,
+) -> list[dict]:
     """
     Search Ethereum specs and EIPs together.
 
@@ -235,6 +269,7 @@ def eth_search(query: str, fork: str | None = None, limit: int = 5) -> list[dict
         query: Search query (e.g., "slashing penalty calculation")
         fork: Optional fork to filter by (defaults to current fork context)
         limit: Maximum results to return
+        include_lean_spec: If True, also include leanSpec Python implementation results
 
     Returns:
         List of relevant chunks with source and similarity score
@@ -254,10 +289,15 @@ def eth_search(query: str, fork: str | None = None, limit: int = 5) -> list[dict
     # Also search without fork filter to catch EIPs
     eip_results = searcher.search_eip(query)
 
+    # Optionally include leanSpec results
+    lean_results = []
+    if include_lean_spec:
+        lean_results = searcher.search_lean_spec(query, limit=validated.limit)
+
     # Merge and dedupe
     seen = set()
     merged = []
-    for r in results + eip_results:
+    for r in results + eip_results + lean_results:
         key = (r["source"], r["section"])
         if key not in seen:
             seen.add(key)
@@ -504,6 +544,71 @@ def eth_search_eip(query: str, eip_number: str | None = None, limit: int = 5) ->
         results = [r for r in results if r.get("eip") == validated.eip_number]
 
     return [_add_github_url(r) for r in results[:validated.limit]]
+
+
+@mcp.tool()
+def eth_search_lean_spec(query: str, limit: int = 5) -> list[dict]:
+    """
+    Search leanSpec Python consensus specification.
+
+    leanSpec is a Python implementation of the Ethereum consensus specification
+    using Pydantic/Container classes. It provides a different perspective from
+    the official markdown specs, with executable Python code.
+
+    Args:
+        query: Search query (e.g., "forkchoice store", "State container")
+        limit: Maximum results to return
+
+    Returns:
+        List of relevant leanSpec chunks with source and score
+    """
+    try:
+        validated = SearchInput(query=query, limit=limit)
+    except ValidationError as e:
+        return [{"error": str(e)}]
+
+    searcher = get_searcher()
+    results = searcher.search_lean_spec(validated.query, limit=validated.limit)
+
+    return [_add_github_url(r) for r in results]
+
+
+@mcp.tool()
+def eth_search_lean_pq(query: str, limit: int = 5, repo: str | None = None) -> list[dict]:
+    """
+    Search leanEthereum post-quantum Rust implementations.
+
+    leanEthereum develops post-quantum cryptography for Ethereum including:
+    - leanSig: PQ signature implementation
+    - leanMultisig: XMSS aggregation zkVM for post-quantum multisig
+    - multilinear-toolkit: Crypto support library
+    - fiat-shamir: Fiat-Shamir crypto support
+
+    Args:
+        query: Search query (e.g., "XMSS signature", "multilinear polynomial")
+        limit: Maximum results to return
+        repo: Optional filter by repo (leanSig, leanMultisig, multilinear-toolkit, fiat-shamir)
+
+    Returns:
+        List of relevant Rust code chunks with source and score
+    """
+    try:
+        validated = SearchInput(query=query, limit=limit)
+    except ValidationError as e:
+        return [{"error": str(e)}]
+
+    # Validate repo if provided
+    valid_repos = {"leanSig", "leanMultisig", "multilinear-toolkit", "fiat-shamir"}
+    if repo and repo not in valid_repos:
+        return [{
+            "error": f"Invalid repo: {repo}",
+            "valid_repos": list(valid_repos),
+        }]
+
+    searcher = get_searcher()
+    results = searcher.search_lean_rust(validated.query, limit=validated.limit, repo=repo)
+
+    return [_add_github_url(r) for r in results]
 
 
 @mcp.tool()
