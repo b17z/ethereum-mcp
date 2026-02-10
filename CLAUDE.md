@@ -1,6 +1,6 @@
 # ethereum-mcp
 
-RAG-powered MCP server for Ethereum consensus specs and EIPs.
+RAG-powered MCP server for Ethereum consensus specs, EIPs, and leanEthereum PQ repos.
 
 ## Quick Reference
 
@@ -9,18 +9,20 @@ RAG-powered MCP server for Ethereum consensus specs and EIPs.
 ethereum-mcp build
 
 # Individual steps
-ethereum-mcp download    # Clone consensus-specs and EIPs
+ethereum-mcp download    # Clone specs, EIPs, leanEthereum repos
+ethereum-mcp download --skip-lean-pq  # Skip leanEthereum PQ repos
 ethereum-mcp compile     # Extract constants/functions to JSON
 ethereum-mcp index       # Build vector embeddings in LanceDB
 
 # Incremental updates (fast)
 ethereum-mcp update      # Git pull + incremental re-index
 ethereum-mcp index       # Incremental by default
-ethereum-mcp index --full    # Force full rebuild
+ethereum-mcp index --full    # Force full rebuild (required after schema changes)
 ethereum-mcp index --dry-run # Preview what would change
 
 # Search
 ethereum-mcp search "slashing penalty"
+ethereum-mcp search "XMSS signature"  # leanEthereum PQ
 ethereum-mcp status      # Check index status
 ethereum-mcp models      # List available embedding models
 ```
@@ -38,6 +40,8 @@ ethereum-mcp models      # List available embedding models
 | `eth_get_spec_version` | Index metadata |
 | `eth_expert_guidance` | Curated expert interpretations |
 | `eth_search_eip` | EIP-specific search |
+| `eth_search_lean_spec` | Search leanSpec Python implementation |
+| `eth_search_lean_pq` | Search leanEthereum PQ Rust code (leanSig, leanMultisig, etc.) |
 
 ## Project Structure
 
@@ -47,9 +51,10 @@ src/ethereum_mcp/
 ├── cli.py              # CLI commands
 ├── config.py           # Configuration management
 ├── indexer/
-│   ├── downloader.py   # Git clone specs/EIPs
-│   ├── compiler.py     # Extract to JSON
-│   ├── chunker.py      # Markdown chunking + chunk IDs
+│   ├── downloader.py   # Git clone specs/EIPs/leanEthereum
+│   ├── compiler.py     # Extract specs to JSON
+│   ├── rust_compiler.py # Rust parsing (tree-sitter + regex fallback)
+│   ├── chunker.py      # Markdown/Python/Rust chunking
 │   ├── embedder.py     # Embeddings + LanceDB + IncrementalEmbedder
 │   └── manifest.py     # File tracking for incremental updates
 └── expert/
@@ -65,8 +70,24 @@ src/ethereum_mcp/
 ├── consensus-specs/    # Cloned repo
 ├── EIPs/               # Cloned repo
 ├── builder-specs/      # Cloned repo
+├── leanSpec/           # Python consensus spec
+├── leanSig/            # PQ signature (Rust)
+├── leanMultisig/       # PQ multisig (Rust)
+├── multilinear-toolkit/# Crypto library (Rust)
+├── fiat-shamir/        # Fiat-Shamir (Rust)
+├── pm/                 # Meeting notes
+├── leanSnappy/         # Compression (Python)
 ├── compiled/           # JSON extracts per fork
 └── lancedb/            # Vector index
+```
+
+## Upgrading
+
+After upgrading to a version with schema changes, rebuild the index:
+
+```bash
+ethereum-mcp download
+ethereum-mcp index --full
 ```
 
 ## Configuration

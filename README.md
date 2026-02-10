@@ -11,6 +11,8 @@ Indexes and searches across:
 - [Consensus Specs](https://github.com/ethereum/consensus-specs) - Official beacon chain specifications
 - [EIPs](https://github.com/ethereum/EIPs) - Ethereum Improvement Proposals
 - [Builder Specs](https://github.com/ethereum/builder-specs) - MEV-boost and PBS specifications
+- [leanSpec](https://github.com/leanEthereum/leanSpec) - Python consensus specification implementation
+- [leanEthereum PQ](https://github.com/leanEthereum) - Post-quantum cryptography (leanSig, leanMultisig, etc.)
 - Client Source Code - All major EL and CL implementations
 
 ## Installation
@@ -116,12 +118,13 @@ Topics include: `churn`, `slashing`, `maxeb`, `withdrawals`, `mev`, `pbs`, `epbs
 
 ```bash
 # Full build pipeline
-ethereum-mcp build                    # Specs + EIPs only
+ethereum-mcp build                    # Specs + EIPs + leanEthereum
 ethereum-mcp build --include-clients  # Include client source code
 ethereum-mcp build --full             # Force full rebuild
 
 # Individual steps
-ethereum-mcp download                 # Clone consensus-specs, EIPs, builder-specs
+ethereum-mcp download                 # Clone all repos (specs, EIPs, leanEthereum PQ)
+ethereum-mcp download --skip-lean-pq  # Skip leanEthereum post-quantum repos
 ethereum-mcp download --include-clients
 ethereum-mcp compile                  # Extract specs to JSON
 ethereum-mcp index                    # Build vector embeddings
@@ -137,6 +140,7 @@ ethereum-mcp update --full            # Update + force rebuild
 ethereum-mcp search "slashing penalty"
 ethereum-mcp search "attestation" --fork electra
 ethereum-mcp search "EIP-4844" --limit 10
+ethereum-mcp search "XMSS signature"  # Search leanEthereum PQ repos
 
 # Info
 ethereum-mcp status                   # Index status, manifest info
@@ -158,10 +162,42 @@ When running as an MCP server:
 | `eth_list_forks` | All upgrades with dates/epochs |
 | `eth_get_spec_version` | Index metadata |
 | `eth_expert_guidance` | Curated expert interpretations |
+| `eth_search_lean_spec` | Search leanSpec Python implementation |
+| `eth_search_lean_pq` | Search leanEthereum post-quantum Rust code |
 | `eth_list_clients` | List all EL/CL clients |
 | `eth_get_client` | Details on specific client |
 | `eth_get_client_diversity` | Diversity stats and health |
 | `eth_get_recommended_client_pairs` | EL+CL pairing recommendations |
+
+## leanEthereum Repositories
+
+The [leanEthereum](https://github.com/leanEthereum) organization develops post-quantum cryptography and formal specifications for Ethereum.
+
+### leanSpec (Python)
+
+[leanSpec](https://github.com/leanEthereum/leanSpec) is a Python implementation of the Ethereum consensus specification using Pydantic containers. Search with `eth_search_lean_spec`.
+
+### Post-Quantum Cryptography (Rust)
+
+| Repository | Description |
+|------------|-------------|
+| [leanSig](https://github.com/leanEthereum/leanSig) | Post-quantum signature implementation |
+| [leanMultisig](https://github.com/leanEthereum/leanMultisig) | XMSS aggregation zkVM for PQ multisig |
+| [multilinear-toolkit](https://github.com/leanEthereum/multilinear-toolkit) | Multilinear polynomial crypto library |
+| [fiat-shamir](https://github.com/leanEthereum/fiat-shamir) | Fiat-Shamir transform implementation |
+
+Search with `eth_search_lean_pq` or filter by repo:
+```python
+eth_search_lean_pq("XMSS signature", repo="leanSig")
+eth_search_lean_pq("multilinear polynomial", repo="multilinear-toolkit")
+```
+
+### Other leanEthereum Repos
+
+| Repository | Language | Description |
+|------------|----------|-------------|
+| [pm](https://github.com/leanEthereum/pm) | Markdown | Meeting notes and agendas |
+| [leanSnappy](https://github.com/leanEthereum/leanSnappy) | Python | Snappy compression |
 
 ## Client Source Code
 
@@ -228,10 +264,39 @@ src/ethereum_mcp/
 ├── consensus-specs/        # Cloned specs repo
 ├── EIPs/                   # Cloned EIPs repo
 ├── builder-specs/          # Cloned builder-specs repo
+├── leanSpec/               # leanSpec Python implementation
+├── leanSig/                # PQ signature (Rust)
+├── leanMultisig/           # PQ multisig (Rust)
+├── multilinear-toolkit/    # Crypto library (Rust)
+├── fiat-shamir/            # Fiat-Shamir (Rust)
+├── pm/                     # Meeting notes (Markdown)
+├── leanSnappy/             # Compression (Python)
 ├── clients/                # Client source code (optional)
 ├── compiled/               # Extracted JSON
 └── lancedb/                # Vector index
 ```
+
+## Upgrading
+
+### Schema Changes (v0.3.0+)
+
+Version 0.3.0 added leanEthereum Rust repos with new metadata fields (`signature`, `visibility`, `constant_name`). If you're upgrading from an earlier version, you must rebuild the index:
+
+```bash
+# Download new repos and rebuild index
+ethereum-mcp download
+ethereum-mcp index --full
+```
+
+The `--full` flag is required because the LanceDB schema has changed. Incremental updates will fail with a schema mismatch error if you don't rebuild.
+
+### When to Use `--full`
+
+Use `ethereum-mcp index --full` when:
+- Upgrading to a version with schema changes
+- Changing the embedding model
+- Corrupted manifest or index
+- You want a clean rebuild
 
 ## Fork History
 
