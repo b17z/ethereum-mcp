@@ -11,10 +11,15 @@ from .indexer.client_compiler import compile_client, load_client_constants, load
 from .indexer.compiler import compile_specs
 from .indexer.downloader import (
     CLIENT_REPOS,
+    LEAN_PQ_REPOS,
     download_clients,
     download_specs,
     get_builder_spec_files,
     get_eip_files,
+    get_lean_pm_files,
+    get_lean_rust_files,
+    get_lean_snappy_files,
+    get_lean_spec_files,
     get_spec_files,
     list_downloaded_clients,
 )
@@ -34,16 +39,29 @@ def main():
 @click.option("--data-dir", type=click.Path(), default=str(DEFAULT_DATA_DIR), help="Data directory")
 @click.option("--force", is_flag=True, help="Force re-download")
 @click.option("--include-clients", is_flag=True, help="Also download client source code")
-def download(data_dir: str, force: bool, include_clients: bool):
-    """Download Ethereum specs, EIPs, builder-specs, and optionally client source code."""
+@click.option("--skip-lean-pq", is_flag=True, help="Skip leanEthereum post-quantum repos")
+def download(data_dir: str, force: bool, include_clients: bool, skip_lean_pq: bool):
+    """Download specs, EIPs, leanSpec, leanEthereum PQ repos, and optionally client code."""
     data_path = Path(data_dir)
     click.echo(f"Downloading to {data_path}...")
 
-    consensus_dir, eips_dir, builder_specs_dir = download_specs(data_path, force=force)
+    consensus_dir, eips_dir, builder_specs_dir, lean_spec_dir = download_specs(
+        data_path, force=force, include_lean_pq=not skip_lean_pq
+    )
 
     click.echo(f"Consensus specs: {consensus_dir}")
     click.echo(f"EIPs: {eips_dir}")
     click.echo(f"Builder specs: {builder_specs_dir}")
+    click.echo(f"leanSpec: {lean_spec_dir}")
+
+    if not skip_lean_pq:
+        click.echo("\nleanEthereum post-quantum repos:")
+        for repo_name in LEAN_PQ_REPOS:
+            repo_path = data_path / repo_name
+            if repo_path.exists():
+                click.echo(f"  {click.style('✓', fg='green')} {repo_name}")
+            else:
+                click.echo(f"  {click.style('✗', fg='red')} {repo_name}")
 
     if include_clients:
         click.echo("\nDownloading client source code...")
@@ -149,7 +167,7 @@ def index(
     dry_run: bool,
     model: str | None,
 ):
-    """Build vector index from specs, EIPs, builder-specs, and optionally client code.
+    """Build vector index from specs, EIPs, builder-specs, leanSpec, and optionally client code.
 
     By default, performs incremental indexing (only re-embeds changed files).
     Use --full to force a complete rebuild.
@@ -158,6 +176,7 @@ def index(
     consensus_dir = data_path / "consensus-specs"
     eips_dir = data_path / "EIPs"
     builder_specs_dir = data_path / "builder-specs"
+    lean_spec_dir = data_path / "leanSpec"
 
     if not consensus_dir.exists():
         click.echo("Error: Consensus specs not found. Run 'download' first.")
@@ -190,9 +209,60 @@ def index(
         current_files[rel] = f
         file_types[rel] = "builder"
 
+    # Collect leanSpec Python files
+    if lean_spec_dir.exists():
+        try:
+            lean_spec_files = get_lean_spec_files(lean_spec_dir)
+        except FileNotFoundError:
+            lean_spec_files = []
+    else:
+        lean_spec_files = []
+    for f in lean_spec_files:
+        rel = str(f.relative_to(data_path))
+        current_files[rel] = f
+        file_types[rel] = "lean"
+
+    # Collect leanEthereum post-quantum Rust files
+    lean_rust_count = 0
+    for repo_name, repo_info in LEAN_PQ_REPOS.items():
+        repo_dir = data_path / repo_name
+        if not repo_dir.exists():
+            continue
+
+        if repo_info["language"] == "rust":
+            try:
+                rust_files = get_lean_rust_files(repo_dir)
+                for f in rust_files:
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    # Store repo name in file_types for later use
+                    file_types[rel] = f"rust:{repo_name}"
+                lean_rust_count += len(rust_files)
+            except FileNotFoundError:
+                pass
+        elif repo_info["language"] == "markdown" and repo_name == "pm":
+            try:
+                pm_files = get_lean_pm_files(repo_dir)
+                for f in pm_files:
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = "pm"
+            except FileNotFoundError:
+                pass
+        elif repo_info["language"] == "python" and repo_name == "leanSnappy":
+            try:
+                snappy_files = get_lean_snappy_files(repo_dir)
+                for f in snappy_files:
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = "lean"  # Use same chunker as leanSpec
+            except FileNotFoundError:
+                pass
+
     click.echo(
         f"Found {len(spec_files)} spec files, {len(eip_files)} EIP files, "
-        f"{len(builder_spec_files)} builder-spec files"
+        f"{len(builder_spec_files)} builder-spec files, {len(lean_spec_files)} leanSpec files, "
+        f"{lean_rust_count} leanEthereum Rust files"
     )
 
     # Create incremental embedder
@@ -284,7 +354,9 @@ def build(data_dir: str, force: bool, include_clients: bool, full: bool):
 
     # Download specs
     click.echo("=== Downloading specs ===")
-    consensus_dir, eips_dir, builder_specs_dir = download_specs(data_path, force=force)
+    consensus_dir, eips_dir, builder_specs_dir, lean_spec_dir = download_specs(
+        data_path, force=force
+    )
 
     # Download clients if requested
     if include_clients:
@@ -344,9 +416,59 @@ def build(data_dir: str, force: bool, include_clients: bool, full: bool):
             current_files[rel] = f
             file_types[rel] = "builder"
 
+    # Collect leanSpec Python files
+    if lean_spec_dir.exists():
+        try:
+            lean_files = get_lean_spec_files(lean_spec_dir)
+        except FileNotFoundError:
+            lean_files = []
+    else:
+        lean_files = []
+    for f in lean_files:
+        rel = str(f.relative_to(data_path))
+        current_files[rel] = f
+        file_types[rel] = "lean"
+
+    # Collect leanEthereum post-quantum Rust files
+    lean_rust_count = 0
+    for repo_name, repo_info in LEAN_PQ_REPOS.items():
+        repo_dir = data_path / repo_name
+        if not repo_dir.exists():
+            continue
+
+        if repo_info["language"] == "rust":
+            try:
+                rust_files = get_lean_rust_files(repo_dir)
+                for f in rust_files:
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = f"rust:{repo_name}"
+                lean_rust_count += len(rust_files)
+            except FileNotFoundError:
+                pass
+        elif repo_info["language"] == "markdown" and repo_name == "pm":
+            try:
+                pm_files = get_lean_pm_files(repo_dir)
+                for f in pm_files:
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = "pm"
+            except FileNotFoundError:
+                pass
+        elif repo_info["language"] == "python" and repo_name == "leanSnappy":
+            try:
+                snappy_files = get_lean_snappy_files(repo_dir)
+                for f in snappy_files:
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = "lean"
+            except FileNotFoundError:
+                pass
+
     click.echo(
         f"Found {len(spec_files)} spec files, {len(eip_files)} EIP files, "
-        f"{len(builder_files) if builder_specs_dir.exists() else 0} builder-spec files"
+        f"{len(builder_files) if builder_specs_dir.exists() else 0} builder-spec files, "
+        f"{len(lean_files)} leanSpec files, {lean_rust_count} leanEthereum Rust files"
     )
 
     # Use incremental embedder
@@ -379,7 +501,12 @@ def update(data_dir: str, full: bool):
         ("consensus-specs", data_path / "consensus-specs"),
         ("EIPs", data_path / "EIPs"),
         ("builder-specs", data_path / "builder-specs"),
+        ("leanSpec", data_path / "leanSpec"),
     ]
+
+    # Add leanEthereum post-quantum repos
+    for repo_name in LEAN_PQ_REPOS:
+        repos.append((repo_name, data_path / repo_name))
 
     click.echo("=== Updating repositories ===")
     for name, repo_path in repos:
@@ -437,6 +564,47 @@ def update(data_dir: str, full: bool):
             rel = str(f.relative_to(data_path))
             current_files[rel] = f
             file_types[rel] = "builder"
+
+    lean_spec_dir = data_path / "leanSpec"
+    if lean_spec_dir.exists():
+        try:
+            for f in get_lean_spec_files(lean_spec_dir):
+                rel = str(f.relative_to(data_path))
+                current_files[rel] = f
+                file_types[rel] = "lean"
+        except FileNotFoundError:
+            pass
+
+    # Collect leanEthereum post-quantum Rust files
+    for repo_name, repo_info in LEAN_PQ_REPOS.items():
+        repo_dir = data_path / repo_name
+        if not repo_dir.exists():
+            continue
+
+        if repo_info["language"] == "rust":
+            try:
+                for f in get_lean_rust_files(repo_dir):
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = f"rust:{repo_name}"
+            except FileNotFoundError:
+                pass
+        elif repo_info["language"] == "markdown" and repo_name == "pm":
+            try:
+                for f in get_lean_pm_files(repo_dir):
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = "pm"
+            except FileNotFoundError:
+                pass
+        elif repo_info["language"] == "python" and repo_name == "leanSnappy":
+            try:
+                for f in get_lean_snappy_files(repo_dir):
+                    rel = str(f.relative_to(data_path))
+                    current_files[rel] = f
+                    file_types[rel] = "lean"
+            except FileNotFoundError:
+                pass
 
     if not current_files:
         click.echo("No files to index. Run 'download' first.")
@@ -529,6 +697,49 @@ def status(data_dir: str):
     builder_specs_dir = data_path / "builder-specs"
     click.echo(f"\nBuilder specs: {builder_specs_dir}")
     click.echo(f"  Exists: {builder_specs_dir.exists()}")
+
+    lean_spec_dir = data_path / "leanSpec"
+    click.echo(f"\nleanSpec: {lean_spec_dir}")
+    click.echo(f"  Exists: {lean_spec_dir.exists()}")
+    if lean_spec_dir.exists():
+        try:
+            lean_files = get_lean_spec_files(lean_spec_dir)
+            click.echo(f"  Python files: {len(lean_files)}")
+        except FileNotFoundError:
+            click.echo("  Source directory not found")
+
+    # leanEthereum post-quantum repos
+    click.echo("\nleanEthereum post-quantum repos:")
+    for repo_name, repo_info in LEAN_PQ_REPOS.items():
+        repo_dir = data_path / repo_name
+        if repo_dir.exists():
+            status_icon = click.style("✓", fg="green")
+            if repo_info["language"] == "rust":
+                try:
+                    rust_files = get_lean_rust_files(repo_dir)
+                    lang = repo_info['language']
+                    click.echo(f"  {status_icon} {repo_name} ({lang}) - {len(rust_files)} files")
+                except FileNotFoundError:
+                    click.echo(f"  {status_icon} {repo_name} ({repo_info['language']}) - no src")
+            elif repo_info["language"] == "markdown":
+                try:
+                    md_files = get_lean_pm_files(repo_dir)
+                    lang = repo_info['language']
+                    click.echo(f"  {status_icon} {repo_name} ({lang}) - {len(md_files)} files")
+                except FileNotFoundError:
+                    click.echo(f"  {status_icon} {repo_name} ({repo_info['language']}) - no src")
+            elif repo_info["language"] == "python":
+                try:
+                    py_files = get_lean_snappy_files(repo_dir)
+                    lang = repo_info['language']
+                    click.echo(f"  {status_icon} {repo_name} ({lang}) - {len(py_files)} files")
+                except FileNotFoundError:
+                    click.echo(f"  {status_icon} {repo_name} ({repo_info['language']}) - no src")
+            else:
+                click.echo(f"  {status_icon} {repo_name} ({repo_info['language']})")
+        else:
+            status_icon = click.style("✗", fg="red")
+            click.echo(f"  {status_icon} {repo_name} (not downloaded)")
 
     compiled_dir = data_path / "compiled"
     click.echo(f"\nCompiled specs: {compiled_dir}")
