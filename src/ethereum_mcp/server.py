@@ -57,6 +57,66 @@ def get_searcher() -> EmbeddingSearcher:
     return EmbeddingSearcher(DEFAULT_DB_PATH)
 
 
+# GitHub URL mappings for source references
+GITHUB_REPOS = {
+    "consensus-specs": {
+        "url": "https://github.com/ethereum/consensus-specs",
+        "branch": "master",
+    },
+    "EIPs": {
+        "url": "https://github.com/ethereum/EIPs",
+        "branch": "master",
+    },
+    "builder-specs": {
+        "url": "https://github.com/ethereum/builder-specs",
+        "branch": "main",
+    },
+}
+
+
+def _source_to_github_url(source_path: str, repo: str | None = None) -> str | None:
+    """
+    Convert a source path to a GitHub URL.
+
+    Args:
+        source_path: Repo-relative file path (e.g., specs/electra/beacon-chain.md)
+        repo: Repository name (e.g., "consensus-specs", "EIPs", "builder-specs")
+
+    Returns:
+        GitHub blob URL or None if repo not recognized
+    """
+    if not source_path:
+        return None
+
+    # If repo is provided, use it directly
+    if repo and repo in GITHUB_REPOS:
+        repo_info = GITHUB_REPOS[repo]
+        return f"{repo_info['url']}/blob/{repo_info['branch']}/{source_path}"
+
+    # Fallback: try to extract repo from absolute path (backwards compatibility)
+    path = Path(source_path)
+    parts = path.parts
+
+    for repo_name, repo_info in GITHUB_REPOS.items():
+        if repo_name in parts:
+            # Find the index of the repo name and extract the relative path
+            idx = parts.index(repo_name)
+            relative_path = "/".join(parts[idx + 1 :])
+            return f"{repo_info['url']}/blob/{repo_info['branch']}/{relative_path}"
+
+    return None
+
+
+def _add_github_url(result: dict) -> dict:
+    """Add github_url field to a search result if source path is recognized."""
+    if "source" in result:
+        repo = result.get("repo")
+        github_url = _source_to_github_url(result["source"], repo=repo)
+        if github_url:
+            result["github_url"] = github_url
+    return result
+
+
 def _safe_path(base: Path, *parts: str) -> Path:
     """
     Safely construct a path, preventing directory traversal.
@@ -201,7 +261,7 @@ def eth_search(query: str, fork: str | None = None, limit: int = 5) -> list[dict
         key = (r["source"], r["section"])
         if key not in seen:
             seen.add(key)
-            merged.append(r)
+            merged.append(_add_github_url(r))
 
     return sorted(merged, key=lambda x: x["score"], reverse=True)[:limit]
 
@@ -231,7 +291,7 @@ def eth_search_specs(query: str, fork: str | None = None, limit: int = 5) -> lis
 
     # Exclude EIP chunk type
     results = searcher.search(validated.query, limit=validated.limit * 2, fork=fork)
-    return [r for r in results if r["chunk_type"] != "eip"][:validated.limit]
+    return [_add_github_url(r) for r in results if r["chunk_type"] != "eip"][:validated.limit]
 
 
 @mcp.tool()
@@ -279,12 +339,13 @@ def eth_grep_constant(constant_name: str, fork: str | None = None) -> dict | Non
 
     for r in results:
         if validated.constant_name.upper() in r["content"].upper():
-            return {
+            result = {
                 "constant": validated.constant_name,
                 "context": r["content"],
                 "fork": r["fork"] or fork,
                 "source": r["source"],
             }
+            return _add_github_url(result)
 
     return None
 
@@ -325,12 +386,16 @@ def eth_analyze_function(function_name: str, fork: str | None = None) -> dict | 
     results = searcher.search_function(validated.function_name, fork=fork)
 
     if results:
-        return {
+        result = {
             "function": validated.function_name,
             "fork": results[0]["fork"] or fork,
             "source": results[0]["content"],
             "file": results[0]["source"],
         }
+        github_url = _source_to_github_url(results[0]["source"])
+        if github_url:
+            result["github_url"] = github_url
+        return result
 
     return None
 
@@ -438,7 +503,7 @@ def eth_search_eip(query: str, eip_number: str | None = None, limit: int = 5) ->
     if validated.eip_number:
         results = [r for r in results if r.get("eip") == validated.eip_number]
 
-    return results[:validated.limit]
+    return [_add_github_url(r) for r in results[:validated.limit]]
 
 
 @mcp.tool()

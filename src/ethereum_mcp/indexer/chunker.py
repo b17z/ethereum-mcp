@@ -47,11 +47,12 @@ class Chunk:
     """A document chunk with metadata."""
 
     content: str
-    source: str  # File path
+    source: str  # Repo-relative file path (e.g., specs/electra/beacon-chain.md)
     fork: str | None  # Fork name if from specs
     section: str | None  # Section header
     chunk_type: str  # 'spec', 'eip', 'function', 'constant'
     metadata: dict
+    repo: str = ""  # Repository name (consensus-specs, EIPs, builder-specs)
     chunk_id: str = ""  # Unique ID for incremental indexing
 
 
@@ -63,6 +64,9 @@ def chunk_documents(
     chunk_overlap: int = 200,
     generate_ids: bool = False,
     base_path: Path | None = None,
+    specs_base: Path | None = None,
+    eips_base: Path | None = None,
+    builder_specs_base: Path | None = None,
 ) -> list[Chunk]:
     """
     Chunk spec and EIP documents for embedding.
@@ -75,6 +79,9 @@ def chunk_documents(
         chunk_overlap: Overlap between chunks
         generate_ids: If True, generate unique chunk IDs for incremental indexing
         base_path: Base path for relative paths in chunk IDs (required if generate_ids=True)
+        specs_base: Base path for consensus-specs (for relative paths)
+        eips_base: Base path for EIPs (for relative paths)
+        builder_specs_base: Base path for builder-specs (for relative paths)
 
     Returns:
         List of chunks with metadata (and chunk_id if generate_ids=True)
@@ -98,15 +105,24 @@ def chunk_documents(
     # Process spec files
     for spec_file in spec_files:
         fork = _extract_fork_from_path(spec_file)
-        chunks.extend(_chunk_spec_file(spec_file, fork, md_splitter, text_splitter))
+        chunks.extend(_chunk_spec_file(
+            spec_file, fork, md_splitter, text_splitter,
+            base_path=specs_base, repo="consensus-specs"
+        ))
 
     # Process EIP files
     for eip_file in eip_files:
-        chunks.extend(_chunk_eip_file(eip_file, md_splitter, text_splitter))
+        chunks.extend(_chunk_eip_file(
+            eip_file, md_splitter, text_splitter,
+            base_path=eips_base, repo="EIPs"
+        ))
 
     # Process builder-specs files
     for builder_file in builder_spec_files:
-        chunks.extend(_chunk_builder_spec_file(builder_file, md_splitter, text_splitter))
+        chunks.extend(_chunk_builder_spec_file(
+            builder_file, md_splitter, text_splitter,
+            base_path=builder_specs_base, repo="builder-specs"
+        ))
 
     # Generate chunk IDs if requested
     if generate_ids:
@@ -182,7 +198,7 @@ def chunk_single_file(
         file_type: Type of file ('spec', 'eip', 'builder')
         chunk_size: Target chunk size in characters
         chunk_overlap: Overlap between chunks
-        base_path: Base path for relative paths in chunk IDs
+        base_path: Base path for relative paths in chunk IDs (data_dir)
 
     Returns:
         List of chunks with chunk_id populated
@@ -199,14 +215,38 @@ def chunk_single_file(
         chunk_overlap=chunk_overlap,
     )
 
+    # Determine repo and repo_base_path from file_type and file_path
+    repo_map = {
+        "spec": "consensus-specs",
+        "eip": "EIPs",
+        "builder": "builder-specs",
+    }
+    repo = repo_map.get(file_type, "")
+
+    # Compute repo-specific base path for relative paths
+    repo_base_path = None
+    if base_path and repo:
+        repo_base_path = base_path / repo
+        if not repo_base_path.exists():
+            repo_base_path = None
+
     chunks = []
     if file_type == "spec":
         fork = _extract_fork_from_path(file_path)
-        chunks = _chunk_spec_file(file_path, fork, md_splitter, text_splitter)
+        chunks = _chunk_spec_file(
+            file_path, fork, md_splitter, text_splitter,
+            base_path=repo_base_path, repo=repo
+        )
     elif file_type == "eip":
-        chunks = _chunk_eip_file(file_path, md_splitter, text_splitter)
+        chunks = _chunk_eip_file(
+            file_path, md_splitter, text_splitter,
+            base_path=repo_base_path, repo=repo
+        )
     elif file_type == "builder":
-        chunks = _chunk_builder_spec_file(file_path, md_splitter, text_splitter)
+        chunks = _chunk_builder_spec_file(
+            file_path, md_splitter, text_splitter,
+            base_path=repo_base_path, repo=repo
+        )
 
     # Assign chunk IDs
     return _assign_chunk_ids(chunks, base_path)
@@ -229,10 +269,21 @@ def _chunk_spec_file(
     fork: str | None,
     md_splitter: MarkdownHeaderTextSplitter,
     text_splitter: RecursiveCharacterTextSplitter,
+    base_path: Path | None = None,
+    repo: str = "consensus-specs",
 ) -> list[Chunk]:
     """Chunk a spec markdown file."""
     chunks = []
     content = file_path.read_text()
+
+    # Compute relative path
+    if base_path:
+        try:
+            source = str(file_path.relative_to(base_path))
+        except ValueError:
+            source = str(file_path)
+    else:
+        source = str(file_path)
 
     # First split by markdown headers
     md_docs = md_splitter.split_text(content)
@@ -250,7 +301,7 @@ def _chunk_spec_file(
                 chunks.append(
                     Chunk(
                         content=sub_content,
-                        source=str(file_path),
+                        source=source,
                         fork=fork,
                         section=section,
                         chunk_type=chunk_type,
@@ -260,13 +311,14 @@ def _chunk_spec_file(
                             "h3": doc.metadata.get("h3"),
                             "sub_chunk": i,
                         },
+                        repo=repo,
                     )
                 )
         else:
             chunks.append(
                 Chunk(
                     content=doc.page_content,
-                    source=str(file_path),
+                    source=source,
                     fork=fork,
                     section=section,
                     chunk_type=chunk_type,
@@ -275,11 +327,12 @@ def _chunk_spec_file(
                         "h2": doc.metadata.get("h2"),
                         "h3": doc.metadata.get("h3"),
                     },
+                    repo=repo,
                 )
             )
 
     # Also extract functions as separate chunks
-    function_chunks = _extract_function_chunks(content, file_path, fork)
+    function_chunks = _extract_function_chunks(content, file_path, fork, base_path, repo)
     chunks.extend(function_chunks)
 
     return chunks
@@ -289,10 +342,21 @@ def _chunk_eip_file(
     file_path: Path,
     md_splitter: MarkdownHeaderTextSplitter,
     text_splitter: RecursiveCharacterTextSplitter,
+    base_path: Path | None = None,
+    repo: str = "EIPs",
 ) -> list[Chunk]:
     """Chunk an EIP markdown file."""
     chunks = []
     content = file_path.read_text()
+
+    # Compute relative path
+    if base_path:
+        try:
+            source = str(file_path.relative_to(base_path))
+        except ValueError:
+            source = str(file_path)
+    else:
+        source = str(file_path)
 
     # Extract EIP number from filename
     eip_match = re.search(r"eip-(\d+)", file_path.name)
@@ -313,7 +377,7 @@ def _chunk_eip_file(
                 chunks.append(
                     Chunk(
                         content=sub_content,
-                        source=str(file_path),
+                        source=source,
                         fork=None,
                         section=section,
                         chunk_type="eip",
@@ -325,13 +389,14 @@ def _chunk_eip_file(
                             "sub_chunk": i,
                             **doc.metadata,
                         },
+                        repo=repo,
                     )
                 )
         else:
             chunks.append(
                 Chunk(
                     content=doc.page_content,
-                    source=str(file_path),
+                    source=source,
                     fork=None,
                     section=section,
                     chunk_type="eip",
@@ -342,6 +407,7 @@ def _chunk_eip_file(
                         "category": frontmatter.get("category"),
                         **doc.metadata,
                     },
+                    repo=repo,
                 )
             )
 
@@ -352,10 +418,21 @@ def _chunk_builder_spec_file(
     file_path: Path,
     md_splitter: MarkdownHeaderTextSplitter,
     text_splitter: RecursiveCharacterTextSplitter,
+    base_path: Path | None = None,
+    repo: str = "builder-specs",
 ) -> list[Chunk]:
     """Chunk a builder-specs markdown file."""
     chunks = []
     content = file_path.read_text()
+
+    # Compute relative path
+    if base_path:
+        try:
+            source = str(file_path.relative_to(base_path))
+        except ValueError:
+            source = str(file_path)
+    else:
+        source = str(file_path)
 
     # Extract fork from path (e.g., specs/bellatrix/builder.md)
     fork = _extract_fork_from_path(file_path)
@@ -375,7 +452,7 @@ def _chunk_builder_spec_file(
                 chunks.append(
                     Chunk(
                         content=sub_content,
-                        source=str(file_path),
+                        source=source,
                         fork=fork,
                         section=section,
                         chunk_type=chunk_type,
@@ -386,13 +463,14 @@ def _chunk_builder_spec_file(
                             "h3": doc.metadata.get("h3"),
                             "sub_chunk": i,
                         },
+                        repo=repo,
                     )
                 )
         else:
             chunks.append(
                 Chunk(
                     content=doc.page_content,
-                    source=str(file_path),
+                    source=source,
                     fork=fork,
                     section=section,
                     chunk_type=chunk_type,
@@ -402,6 +480,7 @@ def _chunk_builder_spec_file(
                         "h2": doc.metadata.get("h2"),
                         "h3": doc.metadata.get("h3"),
                     },
+                    repo=repo,
                 )
             )
 
@@ -433,9 +512,24 @@ def _detect_chunk_type(content: str) -> str:
     return "spec"
 
 
-def _extract_function_chunks(content: str, file_path: Path, fork: str | None) -> list[Chunk]:
+def _extract_function_chunks(
+    content: str,
+    file_path: Path,
+    fork: str | None,
+    base_path: Path | None = None,
+    repo: str = "consensus-specs",
+) -> list[Chunk]:
     """Extract complete function definitions as separate chunks."""
     chunks = []
+
+    # Compute relative path
+    if base_path:
+        try:
+            source = str(file_path.relative_to(base_path))
+        except ValueError:
+            source = str(file_path)
+    else:
+        source = str(file_path)
 
     # Find all python code blocks with function definitions
     pattern = r"```python\n(def\s+(\w+)\s*\([^`]+?)```"
@@ -447,13 +541,14 @@ def _extract_function_chunks(content: str, file_path: Path, fork: str | None) ->
         chunks.append(
             Chunk(
                 content=func_source,
-                source=str(file_path),
+                source=source,
                 fork=fork,
                 section=func_name,
                 chunk_type="function",
                 metadata={
                     "function_name": func_name,
                 },
+                repo=repo,
             )
         )
 

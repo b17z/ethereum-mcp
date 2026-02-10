@@ -6,6 +6,9 @@ from ethereum_mcp.server import (
     DEFAULT_DB_PATH,
     DEFAULT_SPECS_DIR,
     FORKS,
+    GITHUB_REPOS,
+    _add_github_url,
+    _source_to_github_url,
 )
 
 
@@ -45,3 +48,68 @@ class TestServerPaths:
 
     def test_specs_dir_is_under_data_dir(self):
         assert str(DEFAULT_DATA_DIR) in str(DEFAULT_SPECS_DIR)
+
+
+class TestGitHubUrlGeneration:
+    """Tests for GitHub URL generation."""
+
+    def test_github_repos_have_correct_branches(self):
+        """Ensure repos use correct branches."""
+        assert GITHUB_REPOS["consensus-specs"]["branch"] == "master"
+        assert GITHUB_REPOS["EIPs"]["branch"] == "master"
+        assert GITHUB_REPOS["builder-specs"]["branch"] == "main"
+
+    def test_source_to_github_url_with_repo(self):
+        """Test URL generation with repo parameter (new format)."""
+        url = _source_to_github_url("specs/electra/beacon-chain.md", repo="consensus-specs")
+        assert url == "https://github.com/ethereum/consensus-specs/blob/master/specs/electra/beacon-chain.md"
+
+    def test_source_to_github_url_eips_with_repo(self):
+        """Test EIP URL generation with repo parameter."""
+        url = _source_to_github_url("EIPS/eip-4844.md", repo="EIPs")
+        assert url == "https://github.com/ethereum/EIPs/blob/master/EIPS/eip-4844.md"
+
+    def test_source_to_github_url_builder_specs_with_repo(self):
+        """Test builder-specs URL generation with repo parameter."""
+        url = _source_to_github_url("specs/bellatrix/builder.md", repo="builder-specs")
+        assert url == "https://github.com/ethereum/builder-specs/blob/main/specs/bellatrix/builder.md"
+
+    def test_source_to_github_url_fallback_absolute_path(self):
+        """Test fallback for absolute paths (backwards compatibility)."""
+        path = "/Users/someone/.ethereum-mcp/consensus-specs/specs/electra/beacon-chain.md"
+        url = _source_to_github_url(path)
+        assert url == "https://github.com/ethereum/consensus-specs/blob/master/specs/electra/beacon-chain.md"
+
+    def test_source_to_github_url_unknown_repo(self):
+        """Test that unknown repos return None."""
+        url = _source_to_github_url("some/file.md", repo="unknown-repo")
+        assert url is None
+
+    def test_source_to_github_url_empty_path(self):
+        """Test that empty paths return None."""
+        url = _source_to_github_url("", repo="consensus-specs")
+        assert url is None
+
+    def test_add_github_url_with_repo_field(self):
+        """Test _add_github_url uses repo field from result."""
+        result = {
+            "content": "test",
+            "source": "specs/electra/beacon-chain.md",
+            "repo": "consensus-specs",
+        }
+        updated = _add_github_url(result)
+        assert "github_url" in updated
+        assert "blob/master" in updated["github_url"]
+        assert "specs/electra/beacon-chain.md" in updated["github_url"]
+
+    def test_add_github_url_no_source(self):
+        """Test _add_github_url handles missing source."""
+        result = {"content": "test"}
+        updated = _add_github_url(result)
+        assert "github_url" not in updated
+
+    def test_add_github_url_unknown_source(self):
+        """Test _add_github_url handles unrecognized paths without repo."""
+        result = {"content": "test", "source": "/random/path.md"}
+        updated = _add_github_url(result)
+        assert "github_url" not in updated

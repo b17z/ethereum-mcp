@@ -101,6 +101,7 @@ def _chunk_to_record(chunk: Chunk, embedding: list[float]) -> dict[str, Any]:
         "chunk_id": chunk.chunk_id,  # For incremental updates
         "content": chunk.content,
         "source": chunk.source,
+        "repo": chunk.repo,  # Repository name for GitHub URL generation
         "fork": chunk.fork or "",
         "section": chunk.section or "",
         "chunk_type": chunk.chunk_type,
