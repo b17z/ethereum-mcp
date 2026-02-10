@@ -44,9 +44,24 @@ class SpecsConfig:
     consensus_specs_url: str = "https://github.com/ethereum/consensus-specs.git"
     eips_url: str = "https://github.com/ethereum/EIPs.git"
     builder_specs_url: str = "https://github.com/ethereum/builder-specs.git"
+    lean_spec_url: str = "https://github.com/leanEthereum/leanSpec.git"
     consensus_specs_branch: str = "master"
     eips_branch: str = "master"
     builder_specs_branch: str = "main"
+    lean_spec_branch: str = "main"
+    # leanEthereum post-quantum Rust repos
+    lean_sig_url: str = "https://github.com/leanEthereum/leanSig.git"
+    lean_multisig_url: str = "https://github.com/leanEthereum/leanMultisig.git"
+    multilinear_toolkit_url: str = "https://github.com/leanEthereum/multilinear-toolkit.git"
+    fiat_shamir_url: str = "https://github.com/leanEthereum/fiat-shamir.git"
+    lean_pm_url: str = "https://github.com/leanEthereum/pm.git"
+    lean_snappy_url: str = "https://github.com/leanEthereum/leanSnappy.git"
+    lean_sig_branch: str = "main"
+    lean_multisig_branch: str = "main"
+    multilinear_toolkit_branch: str = "main"
+    fiat_shamir_branch: str = "main"
+    lean_pm_branch: str = "main"
+    lean_snappy_branch: str = "main"
 
 
 # Client repositories to index
@@ -344,17 +359,19 @@ def download_specs(
     data_dir: Path,
     config: SpecsConfig | None = None,
     force: bool = False,
-) -> tuple[Path, Path]:
+    include_lean_pq: bool = True,
+) -> tuple[Path, Path, Path, Path]:
     """
-    Download consensus specs and EIPs repositories.
+    Download consensus specs, EIPs, builder-specs, leanSpec, and leanEthereum PQ repos.
 
     Args:
         data_dir: Directory to store downloaded repos
         config: Optional configuration override
         force: If True, re-download even if exists
+        include_lean_pq: If True, also download leanEthereum post-quantum repos
 
     Returns:
-        Tuple of (consensus_specs_path, eips_path)
+        Tuple of (consensus_specs_path, eips_path, builder_specs_path, lean_spec_path)
     """
     config = config or SpecsConfig()
     data_dir = Path(data_dir)
@@ -415,7 +432,64 @@ def download_specs(
         repo = Repo(builder_specs_dir)
         repo.remotes.origin.pull()
 
-    return consensus_dir, eips_dir, builder_specs_dir
+    # Download leanSpec
+    lean_spec_dir = data_dir / "leanSpec"
+    if force and lean_spec_dir.exists():
+        shutil.rmtree(lean_spec_dir)
+
+    if not lean_spec_dir.exists():
+        logger.info("Cloning leanSpec to %s...", lean_spec_dir)
+        Repo.clone_from(
+            config.lean_spec_url,
+            lean_spec_dir,
+            branch=config.lean_spec_branch,
+            depth=1,
+        )
+    else:
+        logger.info("leanSpec already exists at %s, pulling latest...", lean_spec_dir)
+        repo = Repo(lean_spec_dir)
+        repo.remotes.origin.pull()
+
+    # Download leanEthereum post-quantum repos
+    if include_lean_pq:
+        lean_pq_repos = [
+            ("leanSig", config.lean_sig_url, config.lean_sig_branch),
+            ("leanMultisig", config.lean_multisig_url, config.lean_multisig_branch),
+            (
+                "multilinear-toolkit",
+                config.multilinear_toolkit_url,
+                config.multilinear_toolkit_branch,
+            ),
+            ("fiat-shamir", config.fiat_shamir_url, config.fiat_shamir_branch),
+            ("pm", config.lean_pm_url, config.lean_pm_branch),
+            ("leanSnappy", config.lean_snappy_url, config.lean_snappy_branch),
+        ]
+
+        for repo_name, repo_url, repo_branch in lean_pq_repos:
+            repo_dir = data_dir / repo_name
+            if force and repo_dir.exists():
+                shutil.rmtree(repo_dir)
+
+            if not repo_dir.exists():
+                logger.info("Cloning %s to %s...", repo_name, repo_dir)
+                try:
+                    Repo.clone_from(
+                        repo_url,
+                        repo_dir,
+                        branch=repo_branch,
+                        depth=1,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to clone %s: %s", repo_name, e)
+            else:
+                logger.info("%s already exists at %s, pulling latest...", repo_name, repo_dir)
+                try:
+                    repo = Repo(repo_dir)
+                    repo.remotes.origin.pull()
+                except Exception as e:
+                    logger.warning("Failed to pull %s: %s", repo_name, e)
+
+    return consensus_dir, eips_dir, builder_specs_dir, lean_spec_dir
 
 
 def download_clients(
@@ -519,3 +593,148 @@ def get_builder_spec_files(builder_specs_dir: Path) -> list[Path]:
         raise FileNotFoundError(f"Builder specs directory not found: {specs_dir}")
 
     return list(specs_dir.rglob("*.md"))
+
+
+def get_lean_spec_files(lean_spec_dir: Path) -> list[Path]:
+    """
+    Get all Python files from leanSpec src/lean_spec/.
+
+    Args:
+        lean_spec_dir: Path to the leanSpec repository root
+
+    Returns:
+        List of Python file paths
+
+    Raises:
+        FileNotFoundError: If the leanSpec src directory doesn't exist
+    """
+    src_dir = lean_spec_dir / "src" / "lean_spec"
+    if not src_dir.exists():
+        raise FileNotFoundError(f"leanSpec source directory not found: {src_dir}")
+
+    # Get all Python files, excluding __pycache__ and test files
+    files = []
+    for f in src_dir.rglob("*.py"):
+        if "__pycache__" not in str(f) and not f.name.startswith("test_"):
+            files.append(f)
+
+    return files
+
+
+def get_lean_rust_files(repo_dir: Path) -> list[Path]:
+    """
+    Get Rust source files from a leanEthereum Rust repository.
+
+    Args:
+        repo_dir: Path to the repository root (e.g., leanSig, leanMultisig)
+
+    Returns:
+        List of Rust file paths
+
+    Raises:
+        FileNotFoundError: If the repository directory doesn't exist
+    """
+    if not repo_dir.exists():
+        raise FileNotFoundError(f"Repository directory not found: {repo_dir}")
+
+    # Get all Rust files, excluding target directory and test files
+    files = []
+    for f in repo_dir.rglob("*.rs"):
+        path_str = str(f)
+        if "/target/" in path_str:
+            continue
+        if "__pycache__" in path_str:
+            continue
+        files.append(f)
+
+    return files
+
+
+def get_lean_pm_files(pm_dir: Path) -> list[Path]:
+    """
+    Get markdown files from leanEthereum/pm (meeting notes).
+
+    Args:
+        pm_dir: Path to the pm repository root
+
+    Returns:
+        List of markdown file paths
+
+    Raises:
+        FileNotFoundError: If the pm directory doesn't exist
+    """
+    if not pm_dir.exists():
+        raise FileNotFoundError(f"PM directory not found: {pm_dir}")
+
+    # Get all markdown files
+    files = []
+    for f in pm_dir.rglob("*.md"):
+        files.append(f)
+
+    return files
+
+
+def get_lean_snappy_files(snappy_dir: Path) -> list[Path]:
+    """
+    Get Python files from leanEthereum/leanSnappy.
+
+    Args:
+        snappy_dir: Path to the leanSnappy repository root
+
+    Returns:
+        List of Python file paths
+
+    Raises:
+        FileNotFoundError: If the leanSnappy directory doesn't exist
+    """
+    if not snappy_dir.exists():
+        raise FileNotFoundError(f"leanSnappy directory not found: {snappy_dir}")
+
+    # Get all Python files, excluding __pycache__ and test files
+    files = []
+    for f in snappy_dir.rglob("*.py"):
+        if "__pycache__" not in str(f) and not f.name.startswith("test_"):
+            files.append(f)
+
+    return files
+
+
+# leanEthereum post-quantum Rust repositories
+LEAN_PQ_REPOS = {
+    "leanSig": {
+        "url": "https://github.com/leanEthereum/leanSig.git",
+        "branch": "main",
+        "language": "rust",
+        "description": "Post-quantum signature implementation",
+    },
+    "leanMultisig": {
+        "url": "https://github.com/leanEthereum/leanMultisig.git",
+        "branch": "main",
+        "language": "rust",
+        "description": "XMSS aggregation zkVM for post-quantum multisig",
+    },
+    "multilinear-toolkit": {
+        "url": "https://github.com/leanEthereum/multilinear-toolkit.git",
+        "branch": "main",
+        "language": "rust",
+        "description": "Crypto support library for multilinear operations",
+    },
+    "fiat-shamir": {
+        "url": "https://github.com/leanEthereum/fiat-shamir.git",
+        "branch": "main",
+        "language": "rust",
+        "description": "Fiat-Shamir crypto support library",
+    },
+    "pm": {
+        "url": "https://github.com/leanEthereum/pm.git",
+        "branch": "main",
+        "language": "markdown",
+        "description": "Meeting notes and agendas",
+    },
+    "leanSnappy": {
+        "url": "https://github.com/leanEthereum/leanSnappy.git",
+        "branch": "main",
+        "language": "python",
+        "description": "Snappy compression for Ethereum",
+    },
+}
