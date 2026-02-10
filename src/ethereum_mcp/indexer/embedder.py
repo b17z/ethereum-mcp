@@ -116,6 +116,10 @@ def _chunk_to_record(chunk: Chunk, embedding: list[float]) -> dict[str, Any]:
         # Client code metadata
         "client": chunk.metadata.get("client", ""),
         "language": chunk.metadata.get("language", ""),
+        # Rust metadata (for leanEthereum PQ repos)
+        "signature": chunk.metadata.get("signature", ""),
+        "visibility": chunk.metadata.get("visibility", ""),
+        "constant_name": chunk.metadata.get("constant_name", ""),
     }
 
 
@@ -617,6 +621,103 @@ class EmbeddingSearcher:
     def search_eip(self, query: str) -> list[dict]:
         """Search only EIPs."""
         return self.search(query, limit=10, chunk_type="eip")
+
+    def search_lean_spec(self, query: str, limit: int = 10) -> list[dict]:
+        """
+        Search leanSpec Python consensus specification.
+
+        Args:
+            query: Search query
+            limit: Maximum results to return
+
+        Returns:
+            List of matching leanSpec chunks
+        """
+        # Search with lean_ chunk types
+        query_embedding = self.model.encode(query).tolist()
+
+        # Fetch extra results then filter
+        fetch_limit = limit * 3
+        results = self.table.search(query_embedding).limit(fetch_limit).to_list()
+
+        # Filter to leanSpec chunks (lean_class, lean_function, lean_constant, lean_doc)
+        lean_types = {"lean_class", "lean_function", "lean_constant", "lean_doc"}
+        matches = []
+        for r in results:
+            if r.get("chunk_type") not in lean_types:
+                continue
+
+            matches.append({
+                "content": r["content"],
+                "source": r["source"],
+                "repo": r.get("repo", "leanSpec"),
+                "fork": r["fork"],
+                "section": r["section"],
+                "chunk_type": r["chunk_type"],
+                "score": 1 - r["_distance"],
+                "function_name": r.get("function_name"),
+                "chunk_id": r.get("chunk_id"),
+            })
+
+            if len(matches) >= limit:
+                break
+
+        return matches
+
+    def search_lean_rust(self, query: str, limit: int = 10, repo: str | None = None) -> list[dict]:
+        """
+        Search leanEthereum post-quantum Rust implementations.
+
+        Args:
+            query: Search query
+            limit: Maximum results to return
+            repo: Optional repository filter (leanSig, leanMultisig, etc.)
+
+        Returns:
+            List of matching Rust chunks from leanEthereum repos
+        """
+        query_embedding = self.model.encode(query).tolist()
+
+        # Fetch extra results then filter
+        fetch_limit = limit * 3
+        results = self.table.search(query_embedding).limit(fetch_limit).to_list()
+
+        # Filter to Rust chunks (rust_function, rust_struct, rust_enum, rust_const, rust_impl)
+        rust_types = {"rust_function", "rust_struct", "rust_enum", "rust_const", "rust_impl"}
+        # leanEthereum PQ repos
+        pq_repos = {"leanSig", "leanMultisig", "multilinear-toolkit", "fiat-shamir"}
+
+        matches = []
+        for r in results:
+            if r.get("chunk_type") not in rust_types:
+                continue
+
+            result_repo = r.get("repo", "")
+            # Only include leanEthereum PQ repos
+            if result_repo not in pq_repos:
+                continue
+
+            # Filter by specific repo if requested
+            if repo and result_repo != repo:
+                continue
+
+            matches.append({
+                "content": r["content"],
+                "source": r["source"],
+                "repo": result_repo,
+                "fork": r["fork"],
+                "section": r["section"],
+                "chunk_type": r["chunk_type"],
+                "score": 1 - r["_distance"],
+                "function_name": r.get("function_name"),
+                "signature": r.get("signature", ""),
+                "chunk_id": r.get("chunk_id"),
+            })
+
+            if len(matches) >= limit:
+                break
+
+        return matches
 
     def get_stats(self) -> dict[str, Any]:
         """Get index statistics."""
