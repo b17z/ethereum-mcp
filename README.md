@@ -17,9 +17,12 @@ Indexes and searches across:
 
 ## Installation
 
+Important note: The package name is eth-mcp, but the commands are ethereum-mcp. 
+Don't download the ethereum-mcp package.
+
 ```bash
 # From PyPI
-pip install ethereum-mcp
+pip install eth-mcp
 
 # From source
 pip install -e .
