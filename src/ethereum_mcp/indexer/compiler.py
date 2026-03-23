@@ -37,32 +37,32 @@ def compile_specs(consensus_dir: Path, output_dir: Path) -> list[CompiledSpec]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if pyspec can be built
-    setup_py = consensus_dir / "setup.py"
-    if not setup_py.exists():
-        logger.warning("setup.py not found, using fallback extraction")
+    # Check if pyspec can be built via generate_specs
+    generate_specs = consensus_dir / "pysetup" / "generate_specs.py"
+    if not generate_specs.exists():
+        logger.warning("generate_specs.py not found, using fallback extraction")
         return _extract_specs_fallback(consensus_dir, output_dir)
 
-    # Try to build pyspec
+    # Generate pyspec modules from markdown
     try:
         result = subprocess.run(
-            ["pip", "install", "-e", ".[test]"],
+            ["python3", "-m", "pysetup.generate_specs", "--all-forks"],
             cwd=consensus_dir,
             capture_output=True,
             text=True,
             timeout=300,
         )
         if result.returncode != 0:
-            logger.warning("pyspec build failed: %s", result.stderr)
+            logger.warning("pyspec generation failed: %s", result.stderr)
             return _extract_specs_fallback(consensus_dir, output_dir)
 
         return _extract_from_pyspec(consensus_dir, output_dir)
 
     except subprocess.TimeoutExpired:
-        logger.warning("pyspec build timed out, using fallback")
+        logger.warning("pyspec generation timed out, using fallback")
         return _extract_specs_fallback(consensus_dir, output_dir)
     except Exception as e:
-        logger.warning("pyspec build error: %s, using fallback", e)
+        logger.warning("pyspec generation error: %s, using fallback", e)
         return _extract_specs_fallback(consensus_dir, output_dir)
 
 
@@ -74,12 +74,22 @@ def _extract_from_pyspec(consensus_dir: Path, output_dir: Path) -> list[Compiled
     try:
         import importlib
         import inspect
+        import sys
+
+        # Add the pyspec path so eth_consensus_specs is importable
+        pyspec_path = str(consensus_dir / "tests" / "core" / "pyspec")
+        if pyspec_path not in sys.path:
+            sys.path.insert(0, pyspec_path)
 
         forks = ["phase0", "altair", "bellatrix", "capella", "deneb", "electra", "fulu"]
 
         for fork in forks:
             try:
-                module = importlib.import_module(f"eth2spec.{fork}.mainnet")
+                # Try modern eth_consensus_specs path first, fall back to eth2spec
+                try:
+                    module = importlib.import_module(f"eth_consensus_specs.{fork}.mainnet")
+                except ImportError:
+                    module = importlib.import_module(f"eth2spec.{fork}.mainnet")
 
                 constants = {}
                 functions = []
